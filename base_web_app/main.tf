@@ -2,6 +2,108 @@
 # PROVIDERS
 ##################################################################################
 
+provider "yandex" {
+  token      = "YOUR_YANDEX_CLOUD_TOKEN"
+  folder_id  = "YOUR_FOLDER_ID"
+  cloud_id   = "YOUR_CLOUD_ID"
+  zone       = "ru-central1-a"
+}
+
+##################################################################################
+# DATA
+##################################################################################
+
+data "yandex_compute_image" "amzn2_linux" {
+  family = "amzn2-ami-hvm-x86_64-gp2"
+}
+
+##################################################################################
+# RESOURCES
+##################################################################################
+
+# NETWORKING #
+resource "yandex_vpc" "app" {
+  name           = "app"
+  subnet         = "10.0.0.0/16"
+  dns_servers    = ["8.8.8.8"]
+  nat            = true
+  route_table_id = yandex_route_table.app.id
+}
+
+resource "yandex_subnet" "public_subnet1" {
+  name       = "public_subnet1"
+  vpc_id     = yandex_vpc.app.id
+  subnet     = "10.0.0.0/24"
+  dhcp_options {
+    domain_name_servers = ["8.8.8.8"]
+  }
+}
+
+# ROUTING #
+resource "yandex_route_table" "app" {
+  name       = "app"
+  vpc_id     = yandex_vpc.app.id
+  static_route {
+    destination_prefix = "0.0.0.0/0"
+    next_hop_type      = "internet_gateway"
+    next_hop_gateway_id = yandex_internet_gateway.app.id
+  }
+}
+
+resource "yandex_route_table_association" "app_subnet1" {
+  subnet_id      = yandex_subnet.public_subnet1.id
+  route_table_id = yandex_route_table.app.id
+}
+
+# SECURITY GROUPS #
+# Nginx security group 
+resource "yandex_vpc_network" "nginx_sg" {
+  name      = "nginx_sg"
+  vpc_id    = yandex_vpc.app.id
+}
+
+resource "yandex_vpc_firewall_rule" "nginx_http_access" {
+  network_id    = yandex_vpc_network.nginx_sg.id
+  direction     = "INGRESS"
+  protocol      = "tcp"
+  ports         = ["80"]
+  source_ranges = ["0.0.0.0/0"]
+}
+
+# INSTANCES #
+resource "yandex_compute_instance" "nginx1" {
+  name        = "nginx1"
+  platform_id = "standard-v2"
+  cores       = 1
+  memory      = 2
+
+  boot_disk {
+    initialize_params {
+      image_id = yandex_compute_image.amzn2_linux.id
+    }
+  }
+
+  network_interface {
+    subnet_id = yandex_subnet.public_subnet1.id
+  }
+
+  metadata = {
+    user-data = <<EOF
+#! /bin/bash
+sudo amazon-linux-extras install -y nginx1
+sudo service nginx start
+sudo rm /usr/share/nginx/html/index.html
+echo '<html><head><title>Taco Team Server</title></head><body style="background-color:#1F778D"><p style="text-align: center;"><span style="color:#FFFFFF;"><span style="font-size:28px;">You did it! Have a &#127790;</span></span></p></body></html>' | sudo tee /usr/share/nginx/html/index.html
+EOF
+  }
+}
+
+
+
+##################################################################################
+# PROVIDERS
+##################################################################################
+
 provider "aws" {
   access_key = "ACCESS_KEY"
   secret_key = "SECRET_KEY"
